@@ -5,9 +5,7 @@ import requests
 from functools import wraps
 import uuid
 import json
-import pandas as pd
 from datetime import datetime
-import re
 
 # Load environment variables
 load_dotenv()
@@ -34,7 +32,7 @@ def login_required(f):
     return decorated_function
 
 def get_stock_info(symbol):
-    """Lightweight implementation to get stock data without using yfinance"""
+    """Lightweight implementation to get stock data"""
     # For Indian stocks, use NSE/BSE identifiers
     if not symbol.endswith('.NS') and not symbol.endswith('.BO'):
         # Try NSE first
