@@ -15,12 +15,6 @@
             "dest": "main.py"
         }
     ],
-    "functions": {
-        "api/*": {
-            "memory": 1024,
-            "maxDuration": 10
-        }
-    },
     "env": {
         "PIP_TARGET": "./.pip"
     }

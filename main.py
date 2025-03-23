@@ -1,11 +1,13 @@
 from flask import Flask, render_template, request, redirect, session, flash, url_for, jsonify
 from dotenv import load_dotenv
 import os
-import yfinance as yf
 import requests
 from functools import wraps
 import uuid
 import json
+import pandas as pd
+from datetime import datetime
+import re
 
 # Load environment variables
 load_dotenv()
@@ -31,6 +33,56 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def get_stock_info(symbol):
+    """Lightweight implementation to get stock data without using yfinance"""
+    # For Indian stocks, use NSE/BSE identifiers
+    if not symbol.endswith('.NS') and not symbol.endswith('.BO'):
+        # Try NSE first
+        symbol = f"{symbol}.NS"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        # Use Yahoo Finance API directly
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
+            result = data['chart']['result'][0]
+            meta = result['meta']
+            
+            # Get company name
+            url_company = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
+            response_company = requests.get(url_company, headers=headers)
+            data_company = response_company.json()
+            company_name = "N/A"
+            
+            if 'quotes' in data_company and data_company['quotes']:
+                for quote in data_company['quotes']:
+                    if quote['symbol'] == symbol:
+                        company_name = quote.get('longname', quote.get('shortname', "N/A"))
+                        break
+            
+            # Calculate percentage change
+            regular_market_price = meta.get('regularMarketPrice', 0)
+            previous_close = meta.get('previousClose', 0)
+            change_percent = ((regular_market_price - previous_close) / previous_close * 100) if previous_close else 0
+            
+            return {
+                'success': True,
+                'symbol': symbol.split('.')[0],
+                'company_name': company_name,
+                'current_price': round(regular_market_price, 2),
+                'change': round(change_percent, 2)
+            }
+        
+        return {'success': False, 'error': 'Could not fetch stock data'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 @app.route('/firebase-config')
 def firebase_config():
     """Return Firebase configuration as JSON for client-side initialization"""
@@ -53,20 +105,8 @@ def get_stock_data():
     if not symbol:
         return jsonify({"success": False, "error": "Symbol is required"})
     
-    try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        if info and 'regularMarketPrice' in info:
-            return jsonify({
-                "success": True,
-                "symbol": symbol.split('.')[0],
-                "company_name": info.get('longName', 'N/A'),
-                "current_price": round(info.get('regularMarketPrice', 0), 2),
-                "change": round(info.get('regularMarketChangePercent', 0), 2)
-            })
-        return jsonify({"success": False, "error": "Could not fetch stock data"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+    result = get_stock_info(symbol)
+    return jsonify(result)
 
 @app.route('/')
 @login_required
@@ -110,18 +150,13 @@ def stocks():
             try_symbols = [f"{symbol}.NS", f"{symbol}.BO"]
             added = False
             for try_symbol in try_symbols:
-                try:
-                    stock = yf.Ticker(try_symbol)
-                    info = stock.info
-                    if info and 'regularMarketPrice' in info:
-                        # For form submissions, use session and redirect
-                        session.setdefault('stocks', []).append(try_symbol)
-                        flash(f'Added {symbol} to your portfolio', 'success')
-                        added = True
-                        break
-                except Exception as e:
-                    print(f"Error adding stock: {e}")
-                    continue
+                stock_info = get_stock_info(try_symbol)
+                if stock_info['success']:
+                    # For form submissions, use session and redirect
+                    session.setdefault('stocks', []).append(try_symbol)
+                    flash(f'Added {symbol} to your portfolio', 'success')
+                    added = True
+                    break
             
             if not added:
                 flash(f'Could not find stock {symbol} on NSE or BSE', 'error')
@@ -131,19 +166,14 @@ def stocks():
     # Get stocks from session for SSR
     stocks_data = []
     for symbol in session.get('stocks', []):
-        try:
-            stock = yf.Ticker(symbol)
-            info = stock.info
-            if info and 'regularMarketPrice' in info:
-                stocks_data.append({
-                    'symbol': symbol.split('.')[0],
-                    'company_name': info.get('longName', 'N/A'),
-                    'current_price': round(info.get('regularMarketPrice', 0), 2),
-                    'change': round(info.get('regularMarketChangePercent', 0), 2)
-                })
-        except Exception as e:
-            print(f"Error retrieving stock data: {e}")
-            continue
+        stock_info = get_stock_info(symbol)
+        if stock_info['success']:
+            stocks_data.append({
+                'symbol': stock_info['symbol'],
+                'company_name': stock_info['company_name'],
+                'current_price': stock_info['current_price'],
+                'change': stock_info['change']
+            })
 
     return render_template('stocks.html', stocks=stocks_data)
 
