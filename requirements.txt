@@ -1,0 +1,7 @@
+Flask==3.1.0
+gunicorn==21.2.0
+python-dotenv==1.0.1
+requests==2.32.3
+yfinance==0.2.55
+firebase-admin==6.7.0
+uuid==1.30

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinTrack - {% block title %}Financial Tracker{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .sidebar {
+            min-height: 100vh;
+            background-color: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+        }
+        .nav-link {
+            color: #495057;
+        }
+        .nav-link.active {
+            background-color: #e9ecef;
+        }
+    </style>
+    <!-- Firebase App (the core Firebase SDK) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <!-- Firebase Firestore -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <!-- Firebase Authentication -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    
+    <script>
+        // Initialize Firebase from server-provided config
+        let firebaseApp;
+        
+        fetch('/firebase-config')
+            .then(response => response.json())
+            .then(config => {
+                firebaseApp = firebase.initializeApp(config);
+                console.log("Firebase initialized successfully");
+                // Dispatch event to notify other scripts that Firebase is ready
+                document.dispatchEvent(new Event('firebaseReady'));
+            })
+            .catch(error => {
+                console.error("Error initializing Firebase:", error);
+            });
+            
+        // Helper function to get Firestore collection for current user
+        function getUserCollection(collectionName) {
+            if (!firebaseApp) return null;
+            
+            const db = firebase.firestore();
+            const userEmail = "{{ session.user.email if session.user else '' }}";
+            
+            if (!userEmail) return null;
+            
+            return db.collection('users').doc(userEmail).collection(collectionName);
+        }
+    </script>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            {% if session.user %}
+            <div class="col-md-2 sidebar p-3">
+                <h5 class="mb-4">FinTrack</h5>
+                <div class="nav flex-column">
+                    <a class="nav-link mb-2 {% if request.path == '/dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
+                    <a class="nav-link mb-2 {% if request.path == '/stocks' %}active{% endif %}" href="{{ url_for('stocks') }}">Stocks</a>
+                    <a class="nav-link mb-2 {% if request.path == '/mutual-funds' %}active{% endif %}" href="{{ url_for('mutual_funds') }}">Mutual Funds</a>
+                    <a class="nav-link mb-2 {% if request.path == '/insurance' %}active{% endif %}" href="{{ url_for('insurance') }}">Insurance</a>
+                    <a class="nav-link mt-5" href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+            {% endif %}
+            
+            <div class="{% if session.user %}col-md-10{% else %}col-md-12{% endif %} p-4">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+                
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

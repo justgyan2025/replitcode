@@ -1,0 +1,317 @@
+{% extends 'base.html' %}
+
+{% block title %}Stocks{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-6">
+        <h2>Stock Portfolio</h2>
+    </div>
+    <div class="col-md-6 text-end">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addStockModal">
+            Add Stock
+        </button>
+    </div>
+</div>
+
+<div id="loading" class="text-center py-5">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="mt-2">Loading stocks data...</p>
+</div>
+
+<div id="stocks-container" style="display: none;">
+    <div id="no-stocks" class="alert alert-info" style="display: none;">
+        You haven't added any stocks yet. Click the "Add Stock" button to get started.
+    </div>
+    
+    <div id="stocks-table" class="table-responsive" style="display: none;">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Company Name</th>
+                    <th>Current Price</th>
+                    <th>Change (%)</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="stocks-body">
+                <!-- Stocks will be loaded here via JavaScript -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Stock Modal -->
+<div class="modal fade" id="addStockModal" tabindex="-1" aria-labelledby="addStockModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addStockModalLabel">Add Stock</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="add-stock-form">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="symbol" class="form-label">Stock Symbol</label>
+                        <input type="text" class="form-control" id="symbol" name="symbol" required>
+                        <div class="form-text">Enter the NSE or BSE stock symbol (e.g., RELIANCE, TCS, INFY)</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Stock</button>
+                </div>
+                </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Wait for Firebase to be initialized
+    document.addEventListener('firebaseReady', function() {
+        const stocksCollection = getUserCollection('stocks');
+        loadStocks();
+        
+        // Handle add stock form submission
+        document.getElementById('add-stock-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const symbol = document.getElementById('symbol').value.toUpperCase().trim();
+            
+            if (symbol) {
+                addStock(symbol);
+                // Close the modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('addStockModal'));
+                modal.hide();
+                // Reset form
+                this.reset();
+            }
+        });
+        
+        // Function to add a stock
+        function addStock(symbol) {
+            // Show loading indicator
+            const loadingEl = document.getElementById('loading');
+            loadingEl.style.display = 'block';
+            
+            // Try both NSE and BSE directly
+            const trySymbols = [`${symbol}.NS`, `${symbol}.BO`];
+            let foundValidStock = false;
+            
+            // Try each symbol format
+            tryStockSymbol(0);
+            
+            function tryStockSymbol(index) {
+                if (index >= trySymbols.length) {
+                    // We've tried all symbol formats and none worked
+                    loadingEl.style.display = 'none';
+                    alert(`Could not find stock ${symbol} on NSE or BSE. Please verify the symbol.`);
+                    return;
+                }
+                
+                const currentSymbol = trySymbols[index];
+                
+                // Verify if symbol exists using our API endpoint
+                fetch(`/api/stock-data?symbol=${encodeURIComponent(currentSymbol)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Stock exists, add to Firestore
+                        stocksCollection.doc(currentSymbol).set({
+                            symbol: currentSymbol,
+                            added_at: firebase.firestore.FieldValue.serverTimestamp()
+                        })
+                        .then(() => {
+                            console.log(`Stock ${currentSymbol} added successfully!`);
+                            loadingEl.style.display = 'none';
+                            loadStocks(); // Refresh the stock list
+                        })
+                        .catch(error => {
+                            console.error("Error adding stock to Firestore:", error);
+                            loadingEl.style.display = 'none';
+                            alert("Error saving stock to your portfolio. Please try again.");
+                        });
+                    } else {
+                        // Try next symbol format
+                        tryStockSymbol(index + 1);
+                    }
+                })
+                .catch(error => {
+                    console.error(`Error checking stock symbol ${currentSymbol}:`, error);
+                    // Try next symbol format
+                    tryStockSymbol(index + 1);
+                });
+            }
+        }
+        
+        // Function to delete a stock
+        function deleteStock(symbol) {
+            stocksCollection.doc(symbol).delete()
+            .then(() => {
+                console.log("Stock deleted successfully!");
+                loadStocks();
+            })
+            .catch(error => {
+                console.error("Error deleting stock:", error);
+                alert("Error removing stock. Please try again.");
+            });
+        }
+        
+        // Function to load stocks
+        function loadStocks() {
+            const loadingEl = document.getElementById('loading');
+            const stocksContainerEl = document.getElementById('stocks-container');
+            const noStocksEl = document.getElementById('no-stocks');
+            const stocksTableEl = document.getElementById('stocks-table');
+            const stocksBodyEl = document.getElementById('stocks-body');
+            
+            loadingEl.style.display = 'block';
+            stocksContainerEl.style.display = 'none';
+            
+            stocksCollection.get()
+            .then(snapshot => {
+                loadingEl.style.display = 'none';
+                stocksContainerEl.style.display = 'block';
+                
+                if (snapshot.empty) {
+                    noStocksEl.style.display = 'block';
+                    stocksTableEl.style.display = 'none';
+                    return;
+                }
+                
+                noStocksEl.style.display = 'none';
+                stocksTableEl.style.display = 'block';
+                
+                // Clear existing stocks
+                stocksBodyEl.innerHTML = '';
+                
+                // Get stock data from server for each symbol
+                const symbols = snapshot.docs.map(doc => doc.id);
+                
+                // Temporarily render placeholders
+                symbols.forEach(symbol => {
+                    const baseSymbol = symbol.split('.')[0];
+                    const row = document.createElement('tr');
+                    row.id = `stock-row-${symbol}`;
+                    row.innerHTML = `
+                        <td>${baseSymbol}</td>
+                        <td>Loading...</td>
+                        <td>Loading...</td>
+                        <td>Loading...</td>
+                        <td>
+                            <button class="btn btn-sm btn-danger delete-stock" data-symbol="${symbol}">
+                                <i class="bi bi-trash"></i> Remove
+                            </button>
+                        </td>
+                    `;
+                    stocksBodyEl.appendChild(row);
+                });
+                
+                // Add event listeners for delete buttons
+                document.querySelectorAll('.delete-stock').forEach(button => {
+                    button.addEventListener('click', function() {
+                        const symbol = this.getAttribute('data-symbol');
+                        if (confirm(`Are you sure you want to remove ${symbol.split('.')[0]} from your portfolio?`)) {
+                            deleteStock(symbol);
+                        }
+                    });
+                });
+                
+                // Fetch actual stock data for each symbol
+                symbols.forEach(symbol => {
+                    fetch(`/api/stock-data?symbol=${encodeURIComponent(symbol)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const row = document.getElementById(`stock-row-${symbol}`);
+                            if (row) {
+                                row.innerHTML = `
+                                    <td>${data.symbol}</td>
+                                    <td>${data.company_name}</td>
+                                    <td>₹${data.current_price}</td>
+                                    <td class="${data.change > 0 ? 'text-success' : data.change < 0 ? 'text-danger' : ''}">
+                                        ${data.change}%
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-danger delete-stock" data-symbol="${symbol}">
+                                            <i class="bi bi-trash"></i> Remove
+                                        </button>
+                                    </td>
+                                `;
+                                
+                                // Re-add event listener for delete button
+                                row.querySelector('.delete-stock').addEventListener('click', function() {
+                                    const symbolToDelete = this.getAttribute('data-symbol');
+                                    if (confirm(`Are you sure you want to remove ${symbolToDelete.split('.')[0]} from your portfolio?`)) {
+                                        deleteStock(symbolToDelete);
+                                    }
+                                });
+                            }
+                        } else {
+                            // If we can't load the stock data, show an error in the row
+                            const row = document.getElementById(`stock-row-${symbol}`);
+                            if (row) {
+                                row.innerHTML = `
+                                    <td>${symbol.split('.')[0]}</td>
+                                    <td colspan="2" class="text-danger">Error loading stock data</td>
+                                    <td></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-danger delete-stock" data-symbol="${symbol}">
+                                            <i class="bi bi-trash"></i> Remove
+                                        </button>
+                                    </td>
+                                `;
+                                
+                                // Re-add event listener for delete button
+                                row.querySelector('.delete-stock').addEventListener('click', function() {
+                                    const symbolToDelete = this.getAttribute('data-symbol');
+                                    if (confirm(`Are you sure you want to remove ${symbolToDelete.split('.')[0]} from your portfolio?`)) {
+                                        deleteStock(symbolToDelete);
+                                    }
+                                });
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error fetching stock data for ${symbol}:`, error);
+                        // Display error in the row
+                        const row = document.getElementById(`stock-row-${symbol}`);
+                        if (row) {
+                            row.innerHTML = `
+                                <td>${symbol.split('.')[0]}</td>
+                                <td colspan="2" class="text-danger">Error loading stock data</td>
+                                <td></td>
+                                <td>
+                                    <button class="btn btn-sm btn-danger delete-stock" data-symbol="${symbol}">
+                                        <i class="bi bi-trash"></i> Remove
+                                    </button>
+                                </td>
+                            `;
+                            
+                            // Re-add event listener for delete button
+                            row.querySelector('.delete-stock').addEventListener('click', function() {
+                                const symbolToDelete = this.getAttribute('data-symbol');
+                                if (confirm(`Are you sure you want to remove ${symbolToDelete.split('.')[0]} from your portfolio?`)) {
+                                    deleteStock(symbolToDelete);
+                                }
+                            });
+                        }
+                    });
+                });
+            })
+            .catch(error => {
+                console.error("Error loading stocks:", error);
+                loadingEl.style.display = 'none';
+                stocksContainerEl.style.display = 'block';
+                noStocksEl.textContent = 'Error loading stocks. Please try again later.';
+                noStocksEl.style.display = 'block';
+                stocksTableEl.style.display = 'none';
+            });
+        }
+    });
+</script>
+{% endblock %}
