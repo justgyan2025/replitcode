@@ -5,6 +5,7 @@ import yfinance as yf
 import requests
 from functools import wraps
 import uuid
+import json
 
 # Load environment variables
 load_dotenv()
@@ -101,7 +102,9 @@ def dashboard():
 def stocks():
     user_email = session['user']['email']
     
-    if request.method == 'POST':
+    # Only handle session-based storage for SSR mode,
+    # client-side will use Firebase directly
+    if request.method == 'POST' and not (request.is_json or request.content_type == 'application/json'):
         symbol = request.form.get('symbol', '').upper().strip()
         if symbol:
             try_symbols = [f"{symbol}.NS", f"{symbol}.BO"]
@@ -111,14 +114,6 @@ def stocks():
                     stock = yf.Ticker(try_symbol)
                     info = stock.info
                     if info and 'regularMarketPrice' in info:
-                        # For AJAX requests, return JSON
-                        if request.is_json or request.content_type == 'application/json':
-                            return jsonify({
-                                "success": True, 
-                                "symbol": try_symbol,
-                                "message": f"Stock {symbol} found and added"
-                            })
-                        
                         # For form submissions, use session and redirect
                         session.setdefault('stocks', []).append(try_symbol)
                         flash(f'Added {symbol} to your portfolio', 'success')
@@ -129,18 +124,11 @@ def stocks():
                     continue
             
             if not added:
-                if request.is_json or request.content_type == 'application/json':
-                    return jsonify({
-                        "success": False, 
-                        "error": f"Could not find stock {symbol} on NSE or BSE"
-                    })
                 flash(f'Could not find stock {symbol} on NSE or BSE', 'error')
         
-        # Return redirect for form submissions
-        if not (request.is_json or request.content_type == 'application/json'):
-            return redirect(url_for('stocks'))
+        return redirect(url_for('stocks'))
 
-    # Get stocks from session for now (will be replaced by client-side Firestore)
+    # Get stocks from session for SSR
     stocks_data = []
     for symbol in session.get('stocks', []):
         try:
@@ -159,66 +147,40 @@ def stocks():
 
     return render_template('stocks.html', stocks=stocks_data)
 
-@app.route('/mutual-funds', methods=['GET', 'POST'])
+@app.route('/mutual-funds')
 @login_required
 def mutual_funds():
-    user_email = session['user']['email']
+    # Empty initial data, client will load from Firebase
+    return render_template('mutual_funds.html', mutual_funds=[])
+
+@app.route('/api/mutual-fund')
+@login_required
+def get_mutual_fund_data():
+    """API endpoint to get mutual fund data"""
+    scheme_code = request.args.get('scheme_code', '').strip()
+    if not scheme_code:
+        return jsonify({"success": False, "error": "Scheme code is required"})
     
-    if request.method == 'POST':
-        scheme_code = request.form.get('scheme_code')
-        if scheme_code:
-            try:
-                response = requests.get(f'https://api.mfapi.in/mf/{scheme_code}')
-                data = response.json()
-                if data and 'status' in data and data['status'] == 'SUCCESS':
-                    # Note: Firestore operations are now in client-side JavaScript
-                    session.setdefault('mutual_funds', []).append(scheme_code)
-                    flash('Added mutual fund to your portfolio', 'success')
-                else:
-                    flash('Invalid scheme code', 'error')
-            except Exception as e:
-                flash(f'Error fetching mutual fund data: {str(e)}', 'error')
-        return redirect(url_for('mutual_funds'))
+    try:
+        response = requests.get(f'https://api.mfapi.in/mf/{scheme_code}')
+        data = response.json()
+        if data and data.get('status') == 'SUCCESS':
+            return jsonify({
+                "success": True,
+                "scheme_code": scheme_code,
+                "scheme_name": data['meta']['scheme_name'],
+                "nav": data['data'][0]['nav'],
+                "date": data['data'][0]['date']
+            })
+        return jsonify({"success": False, "error": "Invalid scheme code"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
-    # Get mutual funds from session for now (will be replaced by client-side Firestore)
-    funds_data = []
-    for scheme_code in session.get('mutual_funds', []):
-        try:
-            response = requests.get(f'https://api.mfapi.in/mf/{scheme_code}')
-            data = response.json()
-            if data and data.get('status') == 'SUCCESS':
-                funds_data.append({
-                    'scheme_code': scheme_code,
-                    'scheme_name': data['meta']['scheme_name'],
-                    'nav': data['data'][0]['nav'],
-                    'date': data['data'][0]['date']
-                })
-        except Exception as e:
-            print(f"Error retrieving mutual fund data: {e}")
-            continue
-
-    return render_template('mutual_funds.html', mutual_funds=funds_data)
-
-@app.route('/insurance', methods=['GET', 'POST'])
+@app.route('/insurance')
 @login_required
 def insurance():
-    user_email = session['user']['email']
-    
-    if request.method == 'POST':
-        policy_id = str(uuid.uuid4())
-        policy = {
-            'policy_id': policy_id,
-            'policy_name': request.form.get('policy_name'),
-            'policy_number': request.form.get('policy_number'),
-            'premium': float(request.form.get('premium', 0))
-        }
-        # Note: Firestore operations are now in client-side JavaScript
-        session.setdefault('policies', []).append(policy)
-        flash('Added insurance policy to your portfolio', 'success')
-        return redirect(url_for('insurance'))
-
-    # Get policies from session for now (will be replaced by client-side Firestore)
-    return render_template('insurance.html', policies=session.get('policies', []))
+    # Empty initial data, client will load from Firebase
+    return render_template('insurance.html', policies=[])
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
